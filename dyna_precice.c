@@ -142,7 +142,8 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
          *shcon = NULL, *xmr = NULL, *xmi = NULL, *xnoels = NULL, *pslavsurf = NULL,
          *pmastsurf = NULL, *cdnr = NULL, *cdni = NULL, *tinc, *tper, *tmin, *tmax,
          *energyini = NULL, *energy = NULL, alea, *fext = NULL, *smscale = NULL,
-         *autloc = NULL, *xboun2 = NULL, *coefmpc2 = NULL, *fnext = NULL;
+         *autloc = NULL, *xboun2 = NULL, *coefmpc2 = NULL, *fnext = NULL,
+         *aanew_ckp = NULL;
 
   FILE *f1;
 
@@ -1136,6 +1137,8 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
 
   NNEW(aa, double, nev);
   NNEW(aanew, double, nev);
+  /* Adapter: checkpoint of the modal load at the start of the time window */
+  NNEW(aanew_ckp, double, nev);
   NNEW(aamech, double, nev);
 
   /* linear coefficient of the linear amplitude function */
@@ -1413,6 +1416,11 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
 
   // while(1.-theta>1.e-6){
 
+  /* Adapter: CCX_MODAL_END_LOAD=1 applies the end-of-step coupling load as constant over each increment*/
+  const char *modalEndLoadEnv = getenv("CCX_MODAL_END_LOAD");
+  int modalEndLoad = (modalEndLoadEnv != NULL && atoi(modalEndLoadEnv) == 1);
+  printf("Modal dynamic coupling load: %s\n", modalEndLoad ? "constant end-of-step (CCX_MODAL_END_LOAD=1)" : "linear in time (default)");
+
   /* Adapter: Create the interfaces and initialize the coupling */
   Precice_Setup(configFilename, preciceParticipantName, &simulationData);
 
@@ -1443,6 +1451,9 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
     }
     if (Precice_requiresWritingCheckpoint()) {
       Precice_WriteIterationCheckpointModal(&simulationData, bj, bjp, nev);
+      /* Adapter: aanew is the load at the start of the increment. Without restoring it, 
+      a repeated iteration would ramp the load from the previous iteration's force instead of F(t_n) */
+      memcpy(&aanew_ckp[0], &aanew[0], sizeof(double) * nev);
       // Otherwise, each iteration in implicit coupling would be written as a new step
       iinc++;
       jprint++;
@@ -1696,8 +1707,14 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
 
         aanew[i] = aamech[i];
 
-        bb[i] = (aanew[i] - aa[i]) / dtime;
-        aa[i] = aanew[i] - bb[i] * time;
+        if (modalEndLoad) {
+          /* Adapter: constant end-of-step load over the increment */
+          bb[i] = 0.;
+          aa[i] = aanew[i];
+        } else {
+          bb[i] = (aanew[i] - aa[i]) / dtime;
+          aa[i] = aanew[i] - bb[i] * time;
+        }
       }
     } else {
       for (i = 0; i < nev; i++) {
@@ -2088,6 +2105,7 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
     if (Precice_requiresReadingCheckpoint()) {
       if (*nmethod == 4) {
         Precice_ReadIterationCheckpointModal(&simulationData, bj, bjp, nev);
+        memcpy(&aanew[0], &aanew_ckp[0], sizeof(double) * nev);
         *kode = simulationData.kode_value;
       }
       BufferClear(out_buffer);
@@ -2251,6 +2269,7 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
   SFREE(aa);
   SFREE(bb);
   SFREE(aanew);
+  SFREE(aanew_ckp);
   SFREE(ampli);
   SFREE(xbodyact);
   SFREE(bjp);
