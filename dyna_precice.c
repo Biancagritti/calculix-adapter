@@ -1451,7 +1451,7 @@ void dyna_precice(double **cop, ITG *nk, ITG **konp, ITG **ipkonp, char **lakonp
     }
     if (Precice_requiresWritingCheckpoint()) {
       Precice_WriteIterationCheckpointModal(&simulationData, bj, bjp, nev);
-      /* Adapter: aanew is the load at the start of the increment. Without restoring it, 
+      /* Adapter: aanew is the load at the start of the increment. Without restoring it,
       a repeated iteration would ramp the load from the previous iteration's force instead of F(t_n) */
       memcpy(&aanew_ckp[0], &aanew[0], sizeof(double) * nev);
       // Otherwise, each iteration in implicit coupling would be written as a new step
